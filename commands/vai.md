@@ -13,6 +13,7 @@ Procedi autonomamente e fino in fondo su tutto il lavoro pendente o implicito $A
 - **Non ripetere un tentativo identico**: se un fix non ha cambiato nulla nell'albero e l'errore è lo stesso di prima, fermati e cambia approccio invece di rilanciare lo stesso giro.
 - **Commit**: committa il lavoro a step logici. Messaggi in italiano, imperativi. MAI trailer `Co-Authored-By:` né righe "Generated with Claude Code". `trash` > `rm`.
 - **Deploy**: per modifiche server applica via `launchctl kickstart -k` (mai bootout).
-- **Riporta a fine**: output azione-prima, conciso. Elenca cosa è stato fatto e verificato; se resta qualcosa che dipende da me (secret, push, merge, decisione), mettilo come 1-3 next step numerati. Notificami quando è finito o se sei davvero bloccato.
+- **Riporta a fine**: max 600 caratteri fuori dal codice, niente liste annidate. Riga 1: com'è finita. Poi un esito per riga con la sua prova (run, exit code, misura), mai l'elenco dei passi: la completezza la prova il comando. Se resta qualcosa che dipende da me (secret, push, merge, decisione), 1-3 punti numerati col consigliato per primo. Una decisione aperta si incolla, una riga per scelta con «ok / ok ma 2 no», mai «rileggi il file». Notificami quando è finito o se sei davvero bloccato.
+- **Change openspec senza sì**: prima di scrivere codice su `openspec/changes/<nome>`, esegui `grep -qx 'status: approved' openspec/changes/<nome>/.openspec.yaml`. Se esce non-zero, non è un passo reversibile che decidi tu: incolla il blocco `## Da decidere` e fermati su quella change. Il resto del lavoro prosegue. Una card che nomina la change e chiede di implementarla vale come sì.
 
 Non fermarti a metà per chiedere "vado avanti?" — vai avanti.
