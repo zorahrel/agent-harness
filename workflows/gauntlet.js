@@ -1,6 +1,6 @@
 export const meta = {
   name: 'gauntlet',
-  description: 'Gauntlet loop: fan out one worker per piece, pair each with a blind critic that RUNS the check, loop until the bar is green or the round cap is hit',
+  description: 'Gauntlet loop: fan out one worker per piece, a blind critic that RUNS the check, then one verifier per round on the fix only; loop until the bar is green, the round cap is hit, a round changes nothing, or a fix breaks something (escalated to a human)',
   whenToUse: 'Push an already-on-brief build to a much higher quality bar, when the bar is a command that exits non-zero or a named reference artefact. Not for first drafts.',
   phases: [
     { title: 'Decompose' },
@@ -39,6 +39,20 @@ const BAR = [
   REFS.length ? `Compare against these references: ${REFS.join(', ')}` : null,
   CHECK ? 'Regression net: every check that is green today stays green.' : null,
 ].filter(Boolean).join('\n')
+
+// Fotografia dell'albero di lavoro che non tocca né l'indice vero né i ref:
+// un indice privato per pezzo dentro .git (copiato da quello vero per non
+// ri-hashare ogni file), `add -A` per prendere anche i file nuovi, `write-tree`
+// per lo sha. Stesso sha tra due round = il fix non ha cambiato niente;
+// `git diff A B` tra due fotografie = esattamente il fix di quel round, che è
+// l'unica cosa che il verifier del round dopo deve guardare. Percorsi assoluti:
+// GIT_INDEX_FILE relativo si risolve dalla radice, non dalla cartella corrente.
+function snapshotCmd(piece) {
+  const slug = String(piece.name).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
+  const idx = `"$(git rev-parse --path-format=absolute --git-path gauntlet-${slug}.index)"`
+  return `i=${idx} && { cp "$(git rev-parse --path-format=absolute --git-path index)" "$i" 2>/dev/null || true; } ` +
+    `&& GIT_INDEX_FILE="$i" git add -A && GIT_INDEX_FILE="$i" git write-tree`
+}
 
 const PIECE_SCHEMA = {
   type: 'object',
@@ -83,8 +97,33 @@ const VERDICT_SCHEMA = {
       type: 'string',
       description: 'the last line of `git diff --stat` for the working tree, verbatim (empty string if the tree is clean)',
     },
+    snapshot: { type: 'string', description: 'the tree sha printed by the snapshot command, verbatim' },
   },
   required: ['pass', 'defects'],
+}
+
+// Dal round 2: stesso verdetto più le due cose che solo un claim stretto sa dire.
+const REVERIFY_SCHEMA = {
+  type: 'object',
+  properties: {
+    ...VERDICT_SCHEMA.properties,
+    defects: {
+      type: 'array',
+      items: { type: 'string' },
+      description: 'the listed defects still open, each starting with its id ("D2: ..."), plus the check if it exits non-zero',
+    },
+    regressions: {
+      type: 'array',
+      items: { type: 'string' },
+      description: 'things that worked before the fix and do not now, caused by the fix diff — file:line and the observation. Empty if none.',
+    },
+    outOfScope: {
+      type: 'array',
+      items: { type: 'string' },
+      description: 'serious problems noticed outside the claim; reported to a human, they do not fail this round',
+    },
+  },
+  required: ['pass', 'defects', 'regressions'],
 }
 
 // ------------------------------------------------------------ decompose
@@ -100,7 +139,7 @@ if (!pieces || !pieces.length) {
     `SMALLEST INDEPENDENT pieces that can each be worked and verified on their own. ` +
     `Prefer pieces that touch disjoint files. Do not write any code — only plan. ` +
     `Each brief must state a concrete outcome, not a vibe.`,
-    { label: 'decompose', phase: 'Decompose', schema: PIECE_SCHEMA },
+    { label: 'decompose', phase: 'Decompose', schema: PIECE_SCHEMA, agentType: 'worker' },
   )
   pieces = plan?.pieces || []
 }
@@ -110,6 +149,48 @@ log(`${pieces.length} pieces · bar: ${CHECK || 'prose only'} · max ${MAX_ROUND
 // -------------------------------------------------------------- gauntlet
 phase('Gauntlet')
 
+// Dal round 2 non serve un altro critico aperto su tutta la change: i lens
+// aperti trovano scope nuovo a ogni giro e il loop non converge. Serve UN
+// verifier su un claim falsificabile: i difetti D1..Dn sono chiusi dal fix,
+// la barra è verde, il fix non ha rotto niente di ciò che toccava.
+function reverifyPrompt(piece, round, openDefects, prevSnapshot) {
+  const ids = openDefects.map((d, i) => `D${i + 1}. ${d}`).join('\n')
+  const all = openDefects.length > 1 ? `D1..D${openDefects.length}` : 'D1'
+  const snap = snapshotCmd(piece)
+  const scope = prevSnapshot
+    ? `The previous critic photographed the tree it reviewed as ${prevSnapshot}. Photograph the tree now ` +
+      `(run this verbatim — it uses a private index, never the real one):\n  ${snap}\n` +
+      `then read the fix: \`git diff ${prevSnapshot} <sha you got> --stat\`, then \`git diff ${prevSnapshot} <sha you got>\`. ` +
+      `That diff is the whole scope.`
+    : `The previous critic recorded no snapshot, so the fix cannot be isolated: read \`git diff\` (the whole ` +
+      `change) but judge only the claim. Still photograph the tree now (verbatim, private index):\n  ${snap}`
+  return (
+    `Repo: ${a.projectPath}\n\n` +
+    `You are verifying ONE CLAIM about piece "${piece.name}", round ${round}. You did not write the fix ` +
+    `and you have not been told what it changed.\n\n` +
+    `PIECE — ${piece.name}\n${piece.brief}\n\n` +
+    `BAR\n${BAR}\n\n` +
+    `CLAIM\nIn round ${round - 1} a critic rejected this piece with these defects:\n${ids}\n` +
+    `A worker then made a fix. The claim: (a) the fix closes ${all}; (b) the bar holds` +
+    (CHECK ? ` — \`${CHECK}\` exits 0 when YOU run it` : '') +
+    `; (c) the fix broke nothing that worked before it, in the files it touched.\n\n` +
+    `SCOPE\n${scope}\n\n` +
+    `RULES\n` +
+    `- Verify the claim; do not re-audit the piece. An open review already ran in round 1. Add no requirement beyond the bar.\n` +
+    `- defects: the Di still open, each starting with its id ("D2: ..."), plus the check if it exits non-zero. A Di the fix closed is not listed.\n` +
+    `- regressions: something that worked before the fix and does not now, caused by the fix diff — a test or check gone red, ` +
+    `behaviour removed, a check weakened so it passes. file:line and what you observed. A regression stops the loop and goes ` +
+    `to a human, so never guess one: if you need proof it worked before, run it on the previous tree in a scratch worktree ` +
+    (prevSnapshot
+      ? `(\`git worktree add --detach "$TMPDIR/gauntlet-prev" "$(git commit-tree ${prevSnapshot} -m prev)"\`, then \`git worktree remove\` it).\n`
+      : `at HEAD.\n`) +
+    `- outOfScope: anything serious you notice outside the claim (outside the fix diff, or beyond the bar). It reaches the ` +
+    `human; it never goes in defects and never fails this round.\n` +
+    `- pass:true only if (a), (b) and (c) all hold.\n` +
+    `- Report snapshot (the sha the command printed) and diffStat (the last line of \`git diff --stat\`, verbatim).`
+  )
+}
+
 // One piece through the worker <-> blind-critic loop. The critic never sees the
 // worker's self-report: it inspects the repo and runs the check itself.
 async function runPiece(piece) {
@@ -117,6 +198,9 @@ async function runPiece(piece) {
   let defects = []
   let lastVerdict = null
   let lastState = null
+  let lastSnapshot = null
+  // Ciò che i verifier vedono fuori dal claim: non fa girare round, arriva all'umano.
+  const notes = []
 
   for (let round = 1; round <= MAX_ROUNDS; round++) {
     // Budget is shared across the whole turn, so a piece that starts a round it
@@ -127,7 +211,7 @@ async function runPiece(piece) {
       log(`⊘ ${piece.name} — out of budget before round ${round}`)
       return {
         piece: piece.name, passed: false, unverified: true, budgetExhausted: true,
-        rounds: round - 1, verdict: lastVerdict,
+        rounds: round - 1, verdict: lastVerdict, notes,
       }
     }
 
@@ -144,10 +228,14 @@ async function runPiece(piece) {
       `unrelated code and do not weaken any existing check to make it pass. ` +
       (CHECK ? `Run \`${CHECK}\` before you finish and leave it green. ` : '') +
       `Report what you changed.`,
-      { label: `work:${piece.name}`, phase: 'Gauntlet', schema: WORK_SCHEMA, effort: 'high' },
+      { label: `work:${piece.name}`, phase: 'Gauntlet', schema: WORK_SCHEMA, effort: 'high', agentType: 'worker' },
     )
 
-    const verdict = await agent(
+    const verdict = round > 1
+      ? await agent(reverifyPrompt(piece, round, defects, lastSnapshot), {
+        label: `verify:${piece.name}:r${round}`, phase: 'Gauntlet', schema: REVERIFY_SCHEMA, agentType: 'verifier',
+      })
+      : await agent(
       `Repo: ${a.projectPath}\n\n` +
       `You are a CRITIC. You did not write this code and you have not been told what was ` +
       `changed — find out yourself (\`git diff\`, read the files, run things).\n\n` +
@@ -163,8 +251,11 @@ async function runPiece(piece) {
       `for someone else to fix without asking you a question. Do not invent work beyond the bar: ` +
       `if the bar is met, pass.\n` +
       `Also report diffStat: the last line of \`git diff --stat\` verbatim. It decides whether ` +
-      `the previous round changed anything at all, so do not paraphrase or estimate it.`,
-      { label: `critic:${piece.name}`, phase: 'Gauntlet', schema: VERDICT_SCHEMA, effort: 'high' },
+      `the previous round changed anything at all, so do not paraphrase or estimate it.\n` +
+      `Finally photograph the tree you reviewed and report the sha it prints as snapshot. Run this ` +
+      `verbatim — it uses a private index, never the real one:\n  ${snapshotCmd(piece)}\n` +
+      `The next round verifies only the fix made on top of this snapshot.`,
+      { label: `critic:${piece.name}`, phase: 'Gauntlet', schema: VERDICT_SCHEMA, effort: 'high', agentType: 'worker' },
     )
 
     // A dead agent is NOT an approval. agent() returns null when the subagent
@@ -173,12 +264,23 @@ async function runPiece(piece) {
     // reports work that was never done, so it ends the piece as UNVERIFIED.
     if (!verdict) {
       log(`⚠ ${piece.name} — round ${round}: critic did not return (skipped or API error)`)
-      return { piece: piece.name, passed: false, unverified: true, rounds: round, verdict: lastVerdict }
+      return { piece: piece.name, passed: false, unverified: true, rounds: round, verdict: lastVerdict, notes }
     }
     lastVerdict = verdict
+    for (const note of verdict.outOfScope || []) notes.push({ round, note })
+
+    // Il fix di questo round ha rotto ciò che funzionava: un round N+1 farebbe
+    // solo un altro fix tardivo su codice che peggiora (a r3 circa 6 major su 27
+    // erano regressioni del fix prima). Decide un umano. Viene prima del pass:
+    // un pass con una regressione dentro non è un pass.
+    const regressions = round > 1 ? (verdict.regressions || []) : []
+    if (regressions.length) {
+      log(`⚠ ESCALATE ${piece.name} — the round ${round} fix broke what worked (${regressions.length}): ${regressions.join(' · ')} — a human decides, no round ${round + 1}`)
+      return { piece: piece.name, passed: false, escalated: true, regressions, rounds: round, verdict, notes }
+    }
     if (verdict.pass) {
       log(`✓ ${piece.name} — passed at round ${round}`)
-      return { piece: piece.name, passed: true, rounds: round, verdict }
+      return { piece: piece.name, passed: true, rounds: round, verdict, notes }
     }
     defects = verdict.defects || []
 
@@ -188,18 +290,26 @@ async function runPiece(piece) {
     // policy calls this out explicitly: never rerun an unchanged failed gate.
     // Only trust it when the critic actually reported a fingerprint; a missing
     // diffStat is unknown, not "unchanged".
-    const state = verdict.diffStat != null ? `${verdict.diffStat} ${defects.join('|')}` : null
-    if (state !== null && state === lastState) {
-      log(`⊘ ${piece.name} — round ${round} changed nothing (same diff, same defects), stopping`)
-      return { piece: piece.name, passed: false, stalled: true, rounds: round, verdict }
+    const state = verdict.diffStat != null ? `${verdict.diffStat} ${defects.join('|')}` : null
+    // Con due fotografie il confronto è esatto: stesso sha = il worker non ha
+    // toccato niente, qualunque sia il testo dei difetti (dal round 2 li scrive un
+    // altro agente, con altre parole). diffStat + difetti resta solo per chi non
+    // riporta la fotografia: è grossolano, due fix diversi possono avere lo stesso stat.
+    const unchanged = verdict.snapshot && lastSnapshot
+      ? verdict.snapshot === lastSnapshot
+      : state !== null && state === lastState
+    if (unchanged) {
+      log(`⊘ ${piece.name} — round ${round} changed nothing, stopping`)
+      return { piece: piece.name, passed: false, stalled: true, rounds: round, verdict, notes }
     }
     lastState = state
+    lastSnapshot = verdict.snapshot || null
 
     log(`✗ ${piece.name} — round ${round}: ${defects.length} defect(s)`)
   }
 
   log(`⊘ ${piece.name} — round cap (${MAX_ROUNDS}) reached, still red`)
-  return { piece: piece.name, passed: false, rounds: MAX_ROUNDS, verdict: lastVerdict }
+  return { piece: piece.name, passed: false, rounds: MAX_ROUNDS, verdict: lastVerdict, notes }
 }
 
 let results
@@ -221,7 +331,7 @@ if (CHECK) {
     `Repo: ${a.projectPath}\n\n` +
     `Run \`${CHECK}\` once on the current tree and report the verdict verbatim. ` +
     `Then run \`git diff --stat\` and report it. Fix nothing — this is a read-only final gate.`,
-    { label: 'regression', phase: 'Regression', schema: VERDICT_SCHEMA, effort: 'low' },
+    { label: 'regression', phase: 'Regression', schema: VERDICT_SCHEMA, effort: 'low', agentType: 'worker' },
   )
   if (regression && !regression.pass) log(`REGRESSION RED: ${(regression.defects || []).join(' · ')}`)
 }
@@ -234,9 +344,13 @@ if (CHECK) {
 const unverified = results.filter(r => r.unverified)
 const failed = results.filter(r => !r.passed && !r.unverified)
 const stalled = failed.filter(r => r.stalled)
+const escalated = failed.filter(r => r.escalated)
 const passed = results.filter(r => r.passed)
+const outOfScope = results.flatMap(r => (r.notes || []).map(n => ({ piece: r.piece, round: n.round, note: n.note })))
 
 if (failed.length) log(`${failed.length}/${results.length} pieces ended red (${stalled.length} stopped early: nothing changed)`)
+if (escalated.length) log(`ESCALATE — ${escalated.length} piece(s) need a human, a fix broke what worked: ${escalated.map(r => r.piece).join(', ')}`)
+if (outOfScope.length) log(`${outOfScope.length} problem(s) seen outside the claim, NOT checked by the loop: ${outOfScope.map(o => `${o.piece}: ${o.note}`).join(' · ')}`)
 if (unverified.length) log(`${unverified.length}/${results.length} pieces NOT VERIFIED — rerun them: ${unverified.map(r => r.piece).join(', ')}`)
 
 const outcome = unverified.length ? 'unverified'
@@ -254,8 +368,11 @@ return {
   failed: failed.map(r => ({
     piece: r.piece,
     stalled: !!r.stalled,
+    escalated: !!r.escalated,
     defects: r.verdict?.defects || [],
   })),
+  escalate: escalated.map(r => ({ piece: r.piece, round: r.rounds, regressions: r.regressions })),
+  outOfScope,
   unverified: unverified.map(r => ({ piece: r.piece, reason: r.budgetExhausted ? 'budget' : 'critic-missing' })),
   rounds: Object.fromEntries(results.map(r => [r.piece, r.rounds])),
   regression: regression ? { pass: regression.pass, evidence: regression.evidence } : null,

@@ -14,19 +14,25 @@ const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor
 
 async function run({ args, critics, budgetTotal = null, spend = 0, regression = null }) {
   const calls = []
+  // Ogni spawn con prompt e opzioni: servono ai test su tipo d'agente e claim stretto.
+  const spawns = []
+  const judged = {}
   let spent = 0
 
-  const agent = async (_prompt, opts = {}) => {
+  const agent = async (prompt, opts = {}) => {
     const label = opts.label || ''
     calls.push(label)
+    spawns.push({ label, prompt, opts })
     spent += spend
     if (label.startsWith('decompose')) return { pieces: args.pieces }
     if (label.startsWith('work:')) return { summary: 'done', filesChanged: ['a.ts'] }
     if (label.startsWith('regression')) return regression ?? { pass: true, defects: [], evidence: 'exit 0' }
-    if (label.startsWith('critic:')) {
-      const piece = label.slice('critic:'.length)
+    // Round 1 = critic:<pezzo>, dal round 2 = verify:<pezzo>:r<n>. Stessa sequenza
+    // di verdetti per pezzo, qualunque sia l'etichetta.
+    if (label.startsWith('critic:') || label.startsWith('verify:')) {
+      const piece = label.split(':')[1]
       const seq = critics[piece]
-      const n = calls.filter(c => c === label).length - 1
+      const n = judged[piece] = (judged[piece] ?? -1) + 1
       return typeof seq === 'function' ? seq(n) : (seq[Math.min(n, seq.length - 1)])
     }
     throw new Error(`unexpected agent label: ${label}`)
@@ -45,14 +51,17 @@ async function run({ args, critics, budgetTotal = null, spend = 0, regression = 
   const logs = []
   const fn = new AsyncFunction('args', 'agent', 'parallel', 'pipeline', 'phase', 'log', 'budget', SRC)
   const result = await fn(args, agent, parallel, parallel, () => {}, m => logs.push(m), budget)
-  return { result, calls, logs }
+  return { result, calls, spawns, logs }
 }
+
+// Quanti verdetti ha chiesto per un pezzo (critico del round 1 + verifier dopo).
+const judges = (calls, piece) => calls.filter(c => c === `critic:${piece}` || c.startsWith(`verify:${piece}:`)).length
 
 const base = {
   task: 'improve', projectPath: '/repo', checkCommand: 'npm run check',
   pieces: [{ name: 'p1', brief: 'do p1' }], serial: true,
 }
-const fail = (diffStat, defects = ['d1']) => ({ pass: false, defects, diffStat, evidence: 'exit 1' })
+const fail = (diffStat, defects = ['d1'], snapshot) => ({ pass: false, defects, diffStat, snapshot, evidence: 'exit 1' })
 let n = 0
 const ok = (name, cond, extra = '') => {
   n++
@@ -75,7 +84,7 @@ const ok = (name, cond, extra = '') => {
     args: base, critics: { p1: i => fail(`${i + 1} files changed`) },
   })
   ok('cap raggiunto → outcome red, non green', result.outcome === 'red' && result.passed.length === 0)
-  ok('ha usato tutti e 3 i tentativi', calls.filter(c => c === 'critic:p1').length === 3, JSON.stringify(calls))
+  ok('ha usato tutti e 3 i tentativi', judges(calls, 'p1') === 3, JSON.stringify(calls))
   ok('non marcato stalled', result.failed[0].stalled === false)
 }
 
@@ -85,7 +94,7 @@ const ok = (name, cond, extra = '') => {
     args: base, critics: { p1: () => fail('2 files changed, 3 insertions(+)') },
   })
   ok('stallo rilevato → stalled true', result.failed[0]?.stalled === true, JSON.stringify(result.failed))
-  ok('si ferma al 2° tentativo invece di 3', calls.filter(c => c === 'critic:p1').length === 2, JSON.stringify(calls))
+  ok('si ferma al 2° tentativo invece di 3', judges(calls, 'p1') === 2, JSON.stringify(calls))
   ok('stallo non è successo', result.outcome === 'red')
 }
 
@@ -94,7 +103,7 @@ const ok = (name, cond, extra = '') => {
   const { calls } = await run({
     args: base, critics: { p1: () => ({ pass: false, defects: ['d1'], evidence: 'exit 1' }) },
   })
-  ok('diffStat assente → nessuno stallo dedotto, cap pieno', calls.filter(c => c === 'critic:p1').length === 3, JSON.stringify(calls))
+  ok('diffStat assente → nessuno stallo dedotto, cap pieno', judges(calls, 'p1') === 3, JSON.stringify(calls))
 }
 
 // T4 — dead critic is not an approval
@@ -110,7 +119,7 @@ const ok = (name, cond, extra = '') => {
     budgetTotal: 100_000, spend: 25_000,
   })
   ok('budget finito → unverified con reason budget', result.outcome === 'unverified' && result.unverified[0].reason === 'budget', JSON.stringify(result))
-  ok('non ha esaurito i 3 tentativi', calls.filter(c => c === 'critic:p1').length < 3, JSON.stringify(calls))
+  ok('non ha esaurito i 3 tentativi', judges(calls, 'p1') < 3, JSON.stringify(calls))
 }
 
 // T6 — regression red flips a run whose pieces all passed
@@ -122,6 +131,83 @@ const ok = (name, cond, extra = '') => {
   })
   ok('pezzi verdi ma regression rossa → outcome red', result.outcome === 'red', JSON.stringify(result))
   ok('i pezzi restano riportati come passati', result.passed.length === 1 && result.failed.length === 0)
+}
+
+// T7 — dal round 2 UN verifier con un claim stretto, non un altro critico aperto
+{
+  const { spawns } = await run({
+    args: base,
+    critics: { p1: i => fail(`${i + 1} files changed`, i === 0 ? ['primo difetto', 'secondo difetto'] : ['D1: ancora aperto'], `snap${i}`) },
+  })
+  const judgeSpawns = spawns.filter(s => s.label.startsWith('critic:') || s.label.startsWith('verify:'))
+  const [r1, r2, r3] = judgeSpawns
+  ok('round 1 = critico aperto, non il verifier', r1.label === 'critic:p1' && r1.opts.agentType !== 'verifier', JSON.stringify(r1.opts))
+  ok('round 1 fotografa l\'albero (write-tree su indice privato)', /GIT_INDEX_FILE=.*git write-tree/.test(r1.prompt))
+  ok('dal round 2 agentType verifier', r2?.opts.agentType === 'verifier' && r3?.opts.agentType === 'verifier', JSON.stringify(judgeSpawns.map(s => s.opts)))
+  ok('claim numerato con i difetti del round prima', r2.prompt.includes('D1. primo difetto') && r2.prompt.includes('D2. secondo difetto'), r2.prompt)
+  ok('scope = diff dalla fotografia precedente', r2.prompt.includes('git diff snap0') && r3.prompt.includes('git diff snap1'), r2.prompt)
+  ok('un solo giudizio per round', judgeSpawns.length === 3, JSON.stringify(judgeSpawns.map(s => s.label)))
+}
+
+// T8 — il lavoro gira sull'agente snello worker
+{
+  const { spawns } = await run({ args: base, critics: { p1: i => fail(`${i + 1} files changed`, ['d1'], `snap${i}`) } })
+  const work = spawns.filter(s => s.label.startsWith('work:'))
+  ok('ogni work: usa agentType worker', work.length === 3 && work.every(s => s.opts.agentType === 'worker'), JSON.stringify(work.map(s => s.opts)))
+  const gate = spawns.find(s => s.label === 'regression')
+  ok('anche il gate finale gira su worker', gate?.opts.agentType === 'worker', JSON.stringify(gate?.opts))
+}
+
+// T9 — il fix del round 2 rompe ciò che funzionava: escalation, niente round 3
+{
+  const { result, calls, logs } = await run({
+    args: base,
+    critics: { p1: [
+      fail('1 file changed', ['d1'], 'snapA'),
+      { pass: false, defects: [], regressions: ['src/a.ts:10 test auth rosso dopo il fix, verde a snapA'], diffStat: '2 files changed', snapshot: 'snapB', evidence: 'exit 1' },
+    ] },
+  })
+  ok('regressione del fix → escalation, non round 3', judges(calls, 'p1') === 2 && calls.filter(c => c.startsWith('work:')).length === 2, JSON.stringify(calls))
+  ok('escalate riporta pezzo, round e regressione', result.escalate?.[0]?.piece === 'p1' && result.escalate[0].round === 2 && /test auth/.test(result.escalate[0].regressions[0]), JSON.stringify(result.escalate))
+  ok('escalation = red, mai green', result.outcome === 'red' && result.failed[0]?.escalated === true, JSON.stringify(result))
+  ok('log dice ESCALATE', logs.some(l => l.includes('ESCALATE')), JSON.stringify(logs))
+}
+
+// T9b — pass:true con una regressione dentro non è un pass
+{
+  const { result } = await run({
+    args: base,
+    critics: { p1: [fail('1 file changed', ['d1'], 'snapA'), { pass: true, defects: [], regressions: ['lint indebolito'], diffStat: '2 files changed', snapshot: 'snapB' }] },
+  })
+  ok('regressione vince su pass:true', result.outcome === 'red' && result.passed.length === 0 && result.escalate?.length === 1, JSON.stringify(result))
+}
+
+// T10 — stallo esatto: stessa fotografia dell'albero anche se il testo dei difetti cambia
+{
+  const { result, calls } = await run({
+    args: base,
+    critics: { p1: [fail('3 files changed', ['d1'], 'snapA'), fail('3 files changed', ['D1: ancora aperto'], 'snapA'), fail('3 files changed', ['x'], 'snapA')] },
+  })
+  ok('stesso snapshot → stalled al round 2', result.failed[0]?.stalled === true && judges(calls, 'p1') === 2, JSON.stringify({ calls, failed: result.failed }))
+}
+
+// T11 — diffStat uguale ma albero diverso: nessuno stallo finto
+{
+  const { result, calls } = await run({
+    args: base,
+    critics: { p1: i => fail('2 files changed, 3 insertions(+)', ['d1'], `snap${i}`) },
+  })
+  ok('snapshot diversi → niente stallo, cap pieno', judges(calls, 'p1') === 3 && result.failed[0].stalled === false, JSON.stringify(calls))
+}
+
+// T12 — ciò che il verifier vede fuori dal claim arriva all'umano senza far girare altri round
+{
+  const { result, logs } = await run({
+    args: base,
+    critics: { p1: [fail('1 file changed', ['d1'], 'snapA'), { pass: true, defects: [], regressions: [], outOfScope: ['run_command passa tutto l\'env del server'], diffStat: '1 file changed', snapshot: 'snapB' }] },
+  })
+  ok('fuori claim → riportato, il pezzo resta verde', result.outcome === 'green' && result.outOfScope?.[0]?.piece === 'p1' && /env del server/.test(result.outOfScope[0].note), JSON.stringify(result))
+  ok('fuori claim → nel log', logs.some(l => l.includes('env del server')), JSON.stringify(logs))
 }
 
 console.log(`\n${n} assert, tutti verdi`)
