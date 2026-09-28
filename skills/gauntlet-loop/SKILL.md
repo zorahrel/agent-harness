@@ -62,17 +62,19 @@ trades away what already worked.
 ## How the loop is allowed to end
 
 A loop that cannot say *why* it stopped will eventually report a budget as a
-result. Three rules keep the ending honest — the workflow enforces them, and a
+result. Six rules keep the ending honest — the workflow enforces them, and a
 prose run should follow them too:
 
 - **The gate decides, the counters don't.** Running out of rounds, tokens, or
   time is a reason the loop stopped; it is never evidence the bar was met.
   Report those runs as red or unverified and say which pieces are still open.
 - **Never rerun an unchanged failed gate.** If a round leaves the tree exactly
-  as it was and the critic lists the same defects, the worker cannot move that
-  piece: spending another worker and critic buys the same answer. Stop the piece
-  and report it as stalled. (Prime Agent's autonomous mode makes the same call —
-  it advances the attempt count instead of rerunning.)
+  as it was (same snapshot sha of the working tree, whatever words the defects
+  are written in), the worker cannot move that piece: spending another worker
+  and verifier buys the same answer. Stop the piece and report it as stalled.
+  Only when no snapshot was recorded does the workflow fall back to the coarser
+  "same `git diff --stat` and same defects". (Prime Agent's autonomous mode
+  makes the same call — it advances the attempt count instead of rerunning.)
 - **A missing verdict is not a pass.** A critic that died, was skipped, or ran
   out of budget verified nothing. That piece is *unverified*, which is worse
   than red: red was measured, unverified was not.
@@ -129,10 +131,24 @@ It returns an explicit `outcome` — `green`, `red`, or `unverified` — plus
 `failed[]` (each with `stalled` and `escalated`), `escalate[]` (pieces whose
 fix broke what worked, with the regressions: a human decides), `outOfScope[]`
 (problems a verifier saw outside its claim, not checked by the loop),
-`unverified[]` (each with `reason: budget | critic-missing`), and the final
-regression verdict. Report that field as-is: only `green` means the bar was
-met, and `escalate` / `outOfScope` go to the human even when it is green. Its
-own tests live next to it, run them after any edit:
+`unverified[]` (each with `reason: budget | critic-missing | error`; `error`
+means an agent call threw mid-piece, with the message in `error`), and the
+final regression verdict. Report that field as-is: only `green` means the bar
+was met, and `escalate` / `outOfScope` go to the human even when it is green.
+
+Two things the caller has to hand over, because the loop cannot find them:
+
+- **Project conventions go in `bar`, spelled out.** From round 2 the verifier
+  runs without CLAUDE.md, so naming rules, closed lists of domain terms and
+  which checks count reach it only through `bar`. For a convention a round-1
+  defect cites and `bar` does not state, it is told to read the repo's own
+  CLAUDE.md / AGENTS.md, for that defect only.
+- **Pieces that share files: `serial: true`.** The default is parallel, and
+  then the diff a verifier reads can hold the other pieces' edits too. It is
+  told so: a breakage it traces to another piece goes to `outOfScope`, not to
+  `regressions`, and the final gate reruns the check on the whole tree.
+
+Its own tests live next to it, run them after any edit:
 
 ```bash
 node ~/.claude/workflows/gauntlet.test.mjs
@@ -159,6 +175,8 @@ shape, not just its idea:
   the numbered defects, `git diff <previous snapshot> <now>` as the scope, and
   `regressions` / `outOfScope` in the schema. The verifier runs without
   CLAUDE.md (4.4k first-turn tokens against 12.1k with it): put every project
-  convention the claim depends on in the prompt.
+  convention the claim depends on in the prompt. If other workers write in the
+  same tree meanwhile, say so and name them, or it will charge their breakage
+  to this fix and escalate the wrong piece.
 - **Stop rules in code, not in the prompt:** same snapshot twice = stalled;
   any regression from round 2 on = escalate, no next round; cap 3.

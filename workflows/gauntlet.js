@@ -15,10 +15,13 @@ export const meta = {
 //   projectPath:  string   absolute repo path (required)
 //   pieces:       [{name, brief}]  optional — decomposed by an agent if absent
 //   checkCommand: string   the falsifiable bar, e.g. "npm run check"
-//   bar:          string   prose bar for what the command cannot measure
+//   bar:          string   prose bar for what the command cannot measure, plus the
+//                          project conventions it relies on (the round-2+ verifier
+//                          runs without CLAUDE.md, so it only knows what is here)
 //   references:   [string] absolute paths / URLs the critic compares against
 //   maxRounds:    number   per-piece worker↔critic attempts (default 3)
 //   serial:       bool     pieces touch shared files — run one at a time
+//                          (default false: parallel, and the verifier is told so)
 //   pieceCount:   number   how many pieces to decompose into (default 5)
 //   roundCost:    number   output tokens to reserve per round (default 60000)
 // }
@@ -183,6 +186,22 @@ function reverifyPrompt(piece, round, openDefects, prevSnapshot) {
       `That diff is the whole scope.`
     : `The previous critic recorded no snapshot, so the fix cannot be isolated: read \`git diff\` (the whole ` +
       `change) but judge only the claim. Still photograph the tree now (verbatim, private index):\n  ${snap}`
+  // In parallelo gli altri pezzi scrivono nello stesso albero mentre questo si
+  // verifica: il diff fra le due fotografie contiene anche i loro cambi, e la
+  // barra può essere rossa per un loro lavoro a metà. Senza dirlo, il verifier
+  // addebita al fix una rottura altrui e manda all'umano il pezzo sbagliato.
+  // Il gate finale rifà comunque la barra su tutto l'albero, a pezzi finiti.
+  const others = a.serial ? [] : pieces.filter(p => p.name !== piece.name).map(p => p.name)
+  const concurrent = others.length
+    ? `OTHER PIECES\nOther pieces (${others.join(', ')}) are being worked in parallel in this same repo, right now. ` +
+      `The diff above can contain their edits, and a check can be red because one of them is half-done. A regression ` +
+      `counts only if it traces to a change this piece's fix made (this piece's brief` +
+      (piece.files?.length ? `, likely files ${piece.files.join(', ')}` : '') + `). A breakage that traces to ` +
+      `another piece's change goes to outOfScope with the file, never to regressions or defects` +
+      (CHECK ? `; if it is the only reason \`${CHECK}\` is red, (b) holds for this piece: the final gate reruns ` +
+        `the check on the whole tree once every piece is done` : '') +
+      `.\n\n`
+    : ''
   return (
     `Repo: ${a.projectPath}\n\n` +
     `You are verifying ONE CLAIM about piece "${piece.name}", round ${round}. You did not write the fix ` +
@@ -194,6 +213,12 @@ function reverifyPrompt(piece, round, openDefects, prevSnapshot) {
     (CHECK ? ` — \`${CHECK}\` exits 0 when YOU run it` : '') +
     `; (c) the fix broke nothing that worked before it, in the files it touched.\n\n` +
     `SCOPE\n${scope}\n\n` +
+    concurrent +
+    // Il verifier gira senza CLAUDE.md (omitClaudeMd), il critico del round 1
+    // no: un Di può citare una convenzione di progetto che la barra non dice.
+    `CONVENTIONS\nYou run without CLAUDE.md. The project conventions that count are the ones stated in BAR. The ` +
+    `round-1 critic had the repo's own instructions loaded: if a Di cites a convention BAR does not state, read it in ` +
+    `${a.projectPath}/CLAUDE.md or ${a.projectPath}/AGENTS.md (or the one nearest the file), for that Di only.\n\n` +
     `RULES\n` +
     `- Verify the claim; do not re-audit the piece. An open review already ran in round 1. Add no requirement beyond the bar.\n` +
     `- defects: the Di still open, each starting with its id ("D2: ..."), plus the check if it exits non-zero. A Di the fix closed is not listed.\n` +

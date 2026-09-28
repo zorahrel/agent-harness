@@ -235,4 +235,31 @@ const ok = (name, cond, extra = '') => {
   ok('pezzo che lancia → unverified con reason error, non green', result.outcome === 'unverified' && result.unverified[0]?.piece === 'p2' && result.unverified[0].reason === 'error' && /budget exceeded/.test(result.unverified[0].error), JSON.stringify(result))
 }
 
+// T15 — in parallelo il diff del verifier contiene anche i cambi degli altri pezzi: glielo si dice
+{
+  const r2 = [fail('1 file changed', ['d1'], 'snapA'), { pass: true, defects: [], regressions: [], snapshot: 'snapB' }]
+  const two = { ...base, serial: false, pieces: [{ name: 'p1', brief: 'x', files: ['src/a.ts'] }, { name: 'p2', brief: 'y' }] }
+  const par = await run({ args: two, critics: { p1: r2, p2: [{ pass: true, defects: [] }] } })
+  const v = par.spawns.find(s => s.label === 'verify:p1:r2')?.prompt || ''
+  // Solo la sezione, fino alla successiva: RULES nomina outOfScope comunque.
+  const sec = (v.split('OTHER PIECES')[1] || '').split('\nCONVENTIONS')[0]
+  ok('parallelo → il verifier sa che p2 scrive nello stesso repo', sec.includes('p2') && !sec.includes('(p1'), v)
+  ok('parallelo → rottura di un altro pezzo va in outOfScope, non in regressions', /another piece/.test(sec) && sec.includes('outOfScope'), sec)
+  const ser = await run({ args: { ...two, serial: true }, critics: { p1: r2, p2: [{ pass: true, defects: [] }] } })
+  const one = await run({ args: { ...base, serial: false }, critics: { p1: r2 } })
+  const quiet = [ser, one].map(x => x.spawns.find(s => s.label === 'verify:p1:r2')?.prompt || '')
+  ok('seriale o pezzo unico → nessun avviso sugli altri pezzi', quiet.every(p => p && !p.includes('OTHER PIECES')), JSON.stringify(quiet.map(p => p.length)))
+}
+
+// T16 — il verifier gira senza CLAUDE.md: le convenzioni arrivano dalla barra, e sa dove leggere quelle citate dal critico
+{
+  const { spawns } = await run({
+    args: { ...base, bar: 'Nomi in inglese; termini di dominio solo dall\'elenco in AGENTS.md' },
+    critics: { p1: [fail('1 file changed', ['d1'], 'snapA'), { pass: true, defects: [], regressions: [], snapshot: 'snapB' }] },
+  })
+  const v = spawns.find(s => s.label === 'verify:p1:r2')?.prompt || ''
+  ok('verifier: le convenzioni messe nella barra gli arrivano', v.includes('termini di dominio solo dall\'elenco in AGENTS.md'), v)
+  ok('verifier: sa di girare senza CLAUDE.md e dove leggere una convenzione citata da un Di', /without CLAUDE\.md/.test(v) && v.includes('/repo/CLAUDE.md') && v.includes('/repo/AGENTS.md'), v)
+}
+
 console.log(`\n${n} assert, tutti verdi`)
