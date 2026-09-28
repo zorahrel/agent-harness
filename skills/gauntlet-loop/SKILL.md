@@ -76,6 +76,21 @@ prose run should follow them too:
 - **A missing verdict is not a pass.** A critic that died, was skipped, or ran
   out of budget verified nothing. That piece is *unverified*, which is worse
   than red: red was measured, unverified was not.
+- **From round 2, verify the fix, not the change.** Round 1 gets one open,
+  blind critic. After that, ONE verifier checks a narrow claim: "defects
+  D1..Dn from the previous round are closed in the diff since the tree the
+  previous critic reviewed, the bar is green, nothing the fix touched broke".
+  Re-running 2-4 open lenses over the whole change every round is what keeps
+  loops from converging: each pass finds new scope. Anything serious the
+  verifier sees outside the claim is reported to the human (`outOfScope`), it
+  does not buy another round.
+- **A fix that breaks what worked goes to a human.** If the round-N fix
+  introduced a regression, stop the piece and escalate: no round N+1. Late
+  fixes on code that is getting worse are how the loop spends money to lose
+  quality (in real runs, about 6 of the 27 round-3 majors were regressions
+  from the previous round's fix).
+- **Keep the cap at 3.** Rounds beyond it rarely converge; what is still red
+  after 3 goes to a human with its open defects.
 
 ## Composing the prompt
 
@@ -90,7 +105,10 @@ BUILD METHOD
 Break this into the smallest independent pieces. Fan out one subagent per
 piece. Pair each with a separate critic subagent that did not do the work; the
 critic verifies against the bar below and sends the piece back with specific
-defects if it fails.
+defects if it fails. From round 2, one verifier checks only that the listed
+defects are closed by the fix, the bar is green and the fix broke nothing.
+Stop a piece when a round changes nothing; escalate it to me when a fix
+breaks what worked. At most 3 rounds.
 
 BAR
 <the falsifiable condition — command, measurement, or named reference>
@@ -108,10 +126,13 @@ on a mood. Pass `args`: `{ task, projectPath, pieces[], checkCommand, bar,
 references[], maxRounds, serial, pieceCount, roundCost }`.
 
 It returns an explicit `outcome` — `green`, `red`, or `unverified` — plus
-`failed[]` (each with `stalled`), `unverified[]` (each with `reason: budget |
-critic-missing`), and the final regression verdict. Report that field as-is:
-only `green` means the bar was met. Its own tests live next to it, run them
-after any edit:
+`failed[]` (each with `stalled` and `escalated`), `escalate[]` (pieces whose
+fix broke what worked, with the regressions: a human decides), `outOfScope[]`
+(problems a verifier saw outside its claim, not checked by the loop),
+`unverified[]` (each with `reason: budget | critic-missing`), and the final
+regression verdict. Report that field as-is: only `green` means the bar was
+met, and `escalate` / `outOfScope` go to the human even when it is green. Its
+own tests live next to it, run them after any edit:
 
 ```bash
 node ~/.claude/workflows/gauntlet.test.mjs
@@ -119,3 +140,25 @@ node ~/.claude/workflows/gauntlet.test.mjs
 
 Reach for the prose prompt when the work is exploratory enough that you cannot
 name the pieces up front.
+
+## Same pattern in an ad-hoc workflow script
+
+When you write the loop yourself instead of calling `gauntlet.js`, copy its
+shape, not just its idea:
+
+- **Workers:** `agent(prompt, { agentType: 'worker', schema })`. The lean
+  `worker` agent (`~/.claude/agents/worker.md`) has only Bash, Read, Edit,
+  Write, WebFetch, ToolSearch, Monitor and TaskStop: no Artifact, Skill, MCP
+  or agent tools. Measured on a real run: 13.1k tokens on the first turn
+  against 24.7k for the default workflow subagent. A stage that needs an MCP
+  tool (context7, exa, gateway) or WebSearch stays on the default subagent.
+- **Round-1 critic:** open and blind, on `worker` too. Have it record a
+  snapshot of the tree it reviewed (`git write-tree` on a private index, see
+  `snapshotCmd` in `gauntlet.js`), so the next round can isolate the fix.
+- **Round >= 2:** ONE `agent(claim, { agentType: 'verifier', schema })` with
+  the numbered defects, `git diff <previous snapshot> <now>` as the scope, and
+  `regressions` / `outOfScope` in the schema. The verifier runs without
+  CLAUDE.md (4.4k first-turn tokens against 12.1k with it): put every project
+  convention the claim depends on in the prompt.
+- **Stop rules in code, not in the prompt:** same snapshot twice = stalled;
+  any regression from round 2 on = escalate, no next round; cap 3.

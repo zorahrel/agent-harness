@@ -67,15 +67,28 @@ non li confonde mai:
   stato saltato, o il budget è finito a metà
 
 Si rifiuta anche di ripetere un pezzo il cui giro non ha cambiato niente: se
-l'albero di lavoro è identico byte per byte e il critico elenca gli stessi
-difetti, un altro giro compra la stessa risposta a prezzo pieno.
+la fotografia dell'albero di lavoro (uno sha di `git write-tree` su un indice
+privato) è identica a quella del giro prima, un altro giro compra la stessa
+risposta a prezzo pieno.
+
+Dal secondo giro non riparte un critico aperto su tutta la change: un solo
+verifier controlla un'affermazione stretta, «i difetti D1..Dn sono chiusi nel
+diff dall'ultima fotografia, il controllo è verde, il fix non ha rotto niente».
+Se il fix ha rotto qualcosa che funzionava, il pezzo si ferma e va a un umano
+(`escalate`), senza un giro in più. Ciò che il verifier vede fuori
+dall'affermazione arriva all'umano (`outOfScope`) senza far girare altri giri.
+
+Lavoratori e verifier girano sugli agenti `worker` e `verifier` di
+`~/.claude/agents/` (meno strumenti e niente CLAUDE.md nel verifier: circa la
+metà dei token al primo turno). Chi non li ha installati ricade sul subagent di
+default, e il log lo dice.
 
 ```bash
 node workflows/gauntlet.test.mjs
 ```
 
 I test sostituiscono la chiamata al modello, quindi girano offline in circa un
-secondo: 14 asserzioni, nessuna rete, nessun costo.
+secondo: 34 asserzioni, nessuna rete, nessun costo.
 
 ## Installazione
 
@@ -201,8 +214,13 @@ under one roof.
 call it success. This one distinguishes **green** (verified against the bar,
 regression included), **red** (measured, does not pass) and **unverified**
 (nobody actually checked) — and never conflates them. It also refuses to re-run a
-piece whose round changed nothing: identical tree plus identical critic findings
-means another round buys the same answer at full price.
+piece whose round changed nothing: an identical tree snapshot means another round
+buys the same answer at full price. From round 2 it does not re-audit the whole
+change: one verifier checks a narrow claim (the listed defects are closed in the
+fix diff, the check is green, the fix broke nothing), and a fix that broke what
+worked is escalated to a human instead of buying round N+1. Workers and
+verifiers run on lean `worker` / `verifier` agent types when installed, and fall
+back to the default subagent when not.
 
 Install: clone, then `ln -s "$PWD/skills/<name>" ~/.claude/skills/`. If that
 symlink is refused (Claude Code write-protects `~/.claude/skills/` on some
