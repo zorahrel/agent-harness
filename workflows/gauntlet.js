@@ -54,6 +54,25 @@ function snapshotCmd(piece) {
     `&& GIT_INDEX_FILE="$i" git add -A && GIT_INDEX_FILE="$i" git write-tree`
 }
 
+// worker e verifier stanno in ~/.claude/agents, non in questo repo: chi usa
+// solo il workflow non li ha, e agent() con un tipo sconosciuto lancia prima di
+// spawnare. Si ripiega sul subagent di default (costa di più, verifica uguale)
+// e lo si dice una volta, invece di perdere il pezzo.
+const missingTypes = new Set()
+async function spawn(prompt, opts) {
+  const { agentType, ...rest } = opts
+  if (agentType && !missingTypes.has(agentType)) {
+    try {
+      return await agent(prompt, opts)
+    } catch (e) {
+      if (!/agent type '[^']*' not found/.test(String(e?.message ?? e))) throw e
+      missingTypes.add(agentType)
+      log(`agent type '${agentType}' not installed — using the default workflow subagent (see ~/.claude/agents/${agentType}.md)`)
+    }
+  }
+  return agent(prompt, rest)
+}
+
 const PIECE_SCHEMA = {
   type: 'object',
   properties: {
@@ -131,7 +150,7 @@ phase('Decompose')
 
 let pieces = a.pieces
 if (!pieces || !pieces.length) {
-  const plan = await agent(
+  const plan = await spawn(
     `Repo: ${a.projectPath}\n\n` +
     `GOAL\n${a.task}\n\n` +
     `BAR\n${BAR}\n\n` +
@@ -219,7 +238,7 @@ async function runPiece(piece) {
       ? `\n\nA critic rejected the previous round. Fix exactly these defects:\n- ${defects.join('\n- ')}`
       : ''
 
-    await agent(
+    await spawn(
       `Repo: ${a.projectPath}\n\n` +
       `GOAL\n${a.task}\n\n` +
       `YOUR PIECE — ${piece.name}\n${piece.brief}${where}\n\n` +
@@ -232,10 +251,10 @@ async function runPiece(piece) {
     )
 
     const verdict = round > 1
-      ? await agent(reverifyPrompt(piece, round, defects, lastSnapshot), {
+      ? await spawn(reverifyPrompt(piece, round, defects, lastSnapshot), {
         label: `verify:${piece.name}:r${round}`, phase: 'Gauntlet', schema: REVERIFY_SCHEMA, agentType: 'verifier',
       })
-      : await agent(
+      : await spawn(
       `Repo: ${a.projectPath}\n\n` +
       `You are a CRITIC. You did not write this code and you have not been told what was ` +
       `changed — find out yourself (\`git diff\`, read the files, run things).\n\n` +
@@ -312,13 +331,20 @@ async function runPiece(piece) {
   return { piece: piece.name, passed: false, rounds: MAX_ROUNDS, verdict: lastVerdict, notes }
 }
 
+// Un agent() che lancia (budget sforato a metà round, tipo d'agente negato) non
+// deve far sparire il pezzo: parallel() lo trasformerebbe in null e il filtro
+// sotto lo toglierebbe, fino a un GREEN su 0/0 pezzi. Resta, come non verificato.
+const guarded = p => runPiece(p).catch(e => ({
+  piece: p.name, passed: false, unverified: true, error: String(e?.message ?? e), rounds: 0, notes: [],
+}))
+
 let results
 if (a.serial) {
   // Pieces share files: concurrent edits would clobber each other.
   results = []
-  for (const p of pieces) results.push(await runPiece(p))
+  for (const p of pieces) results.push(await guarded(p))
 } else {
-  results = await parallel(pieces.map(p => () => runPiece(p)))
+  results = await parallel(pieces.map(p => () => guarded(p)))
 }
 results = results.filter(Boolean)
 
@@ -327,7 +353,7 @@ phase('Regression')
 
 let regression = null
 if (CHECK) {
-  regression = await agent(
+  regression = await spawn(
     `Repo: ${a.projectPath}\n\n` +
     `Run \`${CHECK}\` once on the current tree and report the verdict verbatim. ` +
     `Then run \`git diff --stat\` and report it. Fix nothing — this is a read-only final gate.`,
@@ -351,7 +377,7 @@ const outOfScope = results.flatMap(r => (r.notes || []).map(n => ({ piece: r.pie
 if (failed.length) log(`${failed.length}/${results.length} pieces ended red (${stalled.length} stopped early: nothing changed)`)
 if (escalated.length) log(`ESCALATE — ${escalated.length} piece(s) need a human, a fix broke what worked: ${escalated.map(r => r.piece).join(', ')}`)
 if (outOfScope.length) log(`${outOfScope.length} problem(s) seen outside the claim, NOT checked by the loop: ${outOfScope.map(o => `${o.piece}: ${o.note}`).join(' · ')}`)
-if (unverified.length) log(`${unverified.length}/${results.length} pieces NOT VERIFIED — rerun them: ${unverified.map(r => r.piece).join(', ')}`)
+if (unverified.length) log(`${unverified.length}/${results.length} pieces NOT VERIFIED — rerun them: ${unverified.map(r => r.error ? `${r.piece} (${r.error})` : r.piece).join(', ')}`)
 
 const outcome = unverified.length ? 'unverified'
   : (failed.length || (regression && !regression.pass)) ? 'red'
@@ -373,7 +399,9 @@ return {
   })),
   escalate: escalated.map(r => ({ piece: r.piece, round: r.rounds, regressions: r.regressions })),
   outOfScope,
-  unverified: unverified.map(r => ({ piece: r.piece, reason: r.budgetExhausted ? 'budget' : 'critic-missing' })),
+  unverified: unverified.map(r => (r.error
+    ? { piece: r.piece, reason: 'error', error: r.error }
+    : { piece: r.piece, reason: r.budgetExhausted ? 'budget' : 'critic-missing' })),
   rounds: Object.fromEntries(results.map(r => [r.piece, r.rounds])),
   regression: regression ? { pass: regression.pass, evidence: regression.evidence } : null,
 }

@@ -12,7 +12,7 @@ const SRC = readFileSync(new URL('./gauntlet.js', import.meta.url), 'utf8')
 
 const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor
 
-async function run({ args, critics, budgetTotal = null, spend = 0, regression = null }) {
+async function run({ args, critics, budgetTotal = null, spend = 0, regression = null, missingTypes = [], throwOn = null }) {
   const calls = []
   // Ogni spawn con prompt e opzioni: servono ai test su tipo d'agente e claim stretto.
   const spawns = []
@@ -21,6 +21,11 @@ async function run({ args, critics, budgetTotal = null, spend = 0, regression = 
 
   const agent = async (prompt, opts = {}) => {
     const label = opts.label || ''
+    // Come il runtime vero: un agentType non installato lancia prima di spawnare.
+    if (opts.agentType && missingTypes.includes(opts.agentType)) {
+      throw new Error(`agent({agentType}): agent type '${opts.agentType}' not found. Available agents: general-purpose`)
+    }
+    if (throwOn && label === throwOn) throw new Error('WorkflowBudgetExceededError: budget exceeded')
     calls.push(label)
     spawns.push({ label, prompt, opts })
     spent += spend
@@ -208,6 +213,26 @@ const ok = (name, cond, extra = '') => {
   })
   ok('fuori claim → riportato, il pezzo resta verde', result.outcome === 'green' && result.outOfScope?.[0]?.piece === 'p1' && /env del server/.test(result.outOfScope[0].note), JSON.stringify(result))
   ok('fuori claim → nel log', logs.some(l => l.includes('env del server')), JSON.stringify(logs))
+}
+
+// T13 — chi clona solo il repo non ha worker/verifier: si ripiega sul default, non si perde il pezzo
+{
+  const { result, spawns, logs } = await run({
+    args: base, missingTypes: ['worker', 'verifier'],
+    critics: { p1: [fail('1 file changed', ['d1'], 'snapA'), { pass: true, defects: [], regressions: [], snapshot: 'snapB' }] },
+  })
+  ok('agentType mancante → default subagent, pezzo verificato', result.outcome === 'green' && spawns.every(s => !s.opts.agentType), JSON.stringify({ result, types: spawns.map(s => s.opts.agentType) }))
+  ok('il ripiego è detto nel log, una volta per tipo', logs.filter(l => l.includes("'worker' not installed")).length === 1 && logs.some(l => l.includes("'verifier' not installed")), JSON.stringify(logs))
+}
+
+// T14 — un agent() che lancia in parallelo non fa sparire il pezzo (mai green su 0/0)
+{
+  const { result } = await run({
+    args: { ...base, serial: false, pieces: [{ name: 'p1', brief: 'x' }, { name: 'p2', brief: 'y' }] },
+    critics: { p1: [{ pass: true, defects: [], diffStat: '1 file changed' }], p2: [{ pass: true, defects: [] }] },
+    throwOn: 'work:p2',
+  })
+  ok('pezzo che lancia → unverified con reason error, non green', result.outcome === 'unverified' && result.unverified[0]?.piece === 'p2' && result.unverified[0].reason === 'error' && /budget exceeded/.test(result.unverified[0].error), JSON.stringify(result))
 }
 
 console.log(`\n${n} assert, tutti verdi`)
