@@ -30,6 +30,15 @@ Le due che cambiano di più la giornata:
 Il filo che le tiene insieme è uno solo: **un lavoro è finito quando una prova
 lo dimostra**, non quando l'agente ha finito le idee.
 
+Una delle regole di [RULES.md](RULES.md) riguarda il modo in cui l'agente ti fa
+domande. Quando gli serve che tu scelga, usa il **menu a scelte** del suo
+harness (`AskUserQuestion` in Claude Code): una domanda per scelta, la
+consigliata per prima, il testo libero sempre disponibile. Viene da una misura
+su un mese di messaggi scritti agli agenti, dove l'idea opposta, un menu che
+indovina cosa stai per scrivere, ci prendeva al massimo nel 6% circa dei casi,
+quasi solo sui «vai» e sugli «ok». Storia e numeri in
+[docs/menus-that-ask.md](docs/menus-that-ask.md) (in inglese).
+
 ## Cosa c'è dentro
 
 | Cartella | A cosa serve |
@@ -43,6 +52,11 @@ lo dimostra**, non quando l'agente ha finito le idee.
 | `skills/zoom-out` | Alza lo sguardo dal diff alla forma del problema. Utile quando non conosci quella zona di codice. |
 | `workflows/gauntlet.js` | Il motore del ciclo: un lavoratore per pezzo, un critico che esegue il controllo, si ripete finché il traguardo è verde — o si spiega perché non lo è. |
 | `commands/` | `/vai` (procedi da solo e riporta onestamente), `/spec` (sviluppo guidato dalle specifiche: proponi, approva, costruisci, verifica), `/commit`, `/recap`, `/caveman`. In italiano. |
+| `tools/moondream` | Un comando per far *guardare* un'immagine all'agente senza bruciargli il contesto: didascalie, domande libere, riquadri e punti su un oggetto. Usa la cloud gratuita di Moondream (5.000 richieste al giorno) e ripiega su un modello locale solo se serve. |
+| `tools/cablecheck.sh` | Ti dice cosa sa fare davvero un cavo USB-C che hai in mano: solo ricarica, oppure anche dati e video. Ventiquattro righe, nessuna dipendenza. |
+| `tools/ui-audit.js` | Misura la geometria vera di una pagina invece di chiedere a un modello se «sembra a posto»: elementi disallineati di pochi pixel, spaziature irregolari, sovrapposizioni, bottoni troppo piccoli da toccare. Si incolla nella console del browser e restituisce numeri, non opinioni. |
+| `tools/pc`, `tools/pc-wake` | Accendono, spengono e interrogano un secondo computer dal Mac (Wake-on-LAN + ssh), per scaricargli i lavori pesanti — un modello locale gira lì invece che sulla macchina su cui stai lavorando. I dati della tua rete stanno in un file di configurazione, non nello script. |
+| `docs/menus-that-ask.md` | Un mese di misure: perché i menu che indovinano cosa scriverai non servono, e quelli che ti chiedono una scelta sì. In inglese. |
 
 ## Progetti vicini
 
@@ -50,10 +64,6 @@ lo dimostra**, non quando l'agente ha finito le idee.
   smonta server MCP mentre l'agente lavora: gli strumenti compaiono subito, senza
   riavviare la sessione. È il pezzo che tiene sotto un solo tetto tutti gli MCP
   che questo harness usa, e si installa da solo.
-| `tools/moondream` | Un comando per far *guardare* un'immagine all'agente senza bruciargli il contesto: didascalie, domande libere, riquadri e punti su un oggetto. Usa la cloud gratuita di Moondream (5.000 richieste al giorno) e ripiega su un modello locale solo se serve. |
-| `tools/cablecheck.sh` | Ti dice cosa sa fare davvero un cavo USB-C che hai in mano: solo ricarica, oppure anche dati e video. Ventiquattro righe, nessuna dipendenza. |
-| `tools/ui-audit.js` | Misura la geometria vera di una pagina invece di chiedere a un modello se «sembra a posto»: elementi disallineati di pochi pixel, spaziature irregolari, sovrapposizioni, bottoni troppo piccoli da toccare. Si incolla nella console del browser e restituisce numeri, non opinioni. |
-| `tools/pc`, `tools/pc-wake` | Accendono, spengono e interrogano un secondo computer dal Mac (Wake-on-LAN + ssh), per scaricargli i lavori pesanti — un modello locale gira lì invece che sulla macchina su cui stai lavorando. I dati della tua rete stanno in un file di configurazione, non nello script. |
 
 ## La parte interessante: come finisce il ciclo
 
@@ -114,7 +124,7 @@ Poi apri Claude Code e scrivi `/grill-me`: se risponde, è installata.
 
 ### I tool in `tools/`
 
-Sono due comandi da terminale, indipendenti dal resto. Si mettono dove il PATH
+Sono comandi da terminale, indipendenti dal resto. Si mettono dove il PATH
 li vede:
 
 ```bash
@@ -162,7 +172,7 @@ Le skill e il workflow sono in inglese; i comandi in `commands/` e alcune skill
 sono in italiano, perché è la lingua in cui vengono usati. Funzionano uguale in
 entrambe: traducili se preferisci, il comportamento non cambia.
 
-Le quattro regole che tutto questo esiste per far rispettare stanno in
+Le cinque regole che tutto questo esiste per far rispettare stanno in
 [RULES.md](RULES.md).
 
 ## Licenza
@@ -176,7 +186,7 @@ Le quattro regole che tutto questo esiste per far rispettare stanno in
 # claude-harness (English)
 
 Workflows, skills and commands for [Claude Code](https://claude.com/claude-code)
-that survive long, autonomous runs — plus the four [rules](RULES.md) they exist
+that survive long, autonomous runs — plus the five [rules](RULES.md) they exist
 to enforce.
 
 **If you are not a developer:** Claude Code is an assistant that writes software
@@ -189,6 +199,15 @@ the agent reads them by itself.
 Nothing here is a framework. Each piece is a plain file the harness already knows
 how to load, and each one can be adopted on its own.
 
+**Menus that ask, not menus that guess.** One of the [rules](RULES.md) is about
+how the agent asks you things: when it needs you to choose, it uses the
+harness's choice tool (`AskUserQuestion` in Claude Code), one question per
+decision, recommended option first, free text always open. It came out of
+measuring a month of messages to agents, where the opposite idea, a menu that
+predicts what you will type, was right about 6% of the time at best, almost
+only on "go" and "ok". The story and the numbers:
+[docs/menus-that-ask.md](docs/menus-that-ask.md).
+
 | Path | What it is |
 |---|---|
 | `skills/grill-me` | Interrogates a plan until no fork is left open — one question at a time, recommended answer first. |
@@ -200,15 +219,16 @@ how to load, and each one can be adopted on its own.
 | `skills/zoom-out` | Steps back from the diff to the shape of the problem. |
 | `workflows/gauntlet.js` | Fan out one worker per piece, pair each with a critic that *runs* the check, loop until the bar is green — or report honestly why it isn't. |
 | `commands/` | `/vai` (go autonomous, report honestly), `/spec` (spec-driven development: propose, approve, build, verify), `/commit`, `/recap`, `/caveman`. In Italian. |
+| `tools/moondream` | Lets the agent *look* at an image without burning its context: captions, free-form questions, bounding boxes, points. Cloud-first (Moondream's free tier, 5k requests/day), falls back to a local model only when it has to. |
+| `tools/cablecheck.sh` | Tells you what a USB-C cable can actually do — charge only, or data and video too. 24 lines, no dependencies. macOS. |
+| `tools/ui-audit.js` | Measures a page's real geometry instead of asking a model whether it "looks fine": near-miss alignments, irregular spacing, overlaps, tap targets under 44px. Paste it into the browser console; it returns numbers, not opinions. |
+| `tools/pc`, `tools/pc-wake` | Wake, sleep and query a second machine from your Mac (Wake-on-LAN + ssh), so heavy local models run there instead of on the laptop you are working on. Your network details live in a config file, not in the script. |
+| `docs/menus-that-ask.md` | A month of measurements: why menus that guess what you will type did not pay off, and menus that ask for a decision made the cut. |
 
 **Nearby:** [mcp-hot-gateway](https://github.com/zorahrel/mcp-hot-gateway) mounts
 and unmounts MCP servers at runtime — tools appear instantly via
 `list_changed`, no session restart. It is what keeps every MCP this harness uses
 under one roof.
-| `tools/moondream` | Lets the agent *look* at an image without burning its context: captions, free-form questions, bounding boxes, points. Cloud-first (Moondream's free tier, 5k requests/day), falls back to a local model only when it has to. |
-| `tools/cablecheck.sh` | Tells you what a USB-C cable can actually do — charge only, or data and video too. 24 lines, no dependencies. macOS. |
-| `tools/ui-audit.js` | Measures a page's real geometry instead of asking a model whether it "looks fine": near-miss alignments, irregular spacing, overlaps, tap targets under 44px. Paste it into the browser console; it returns numbers, not opinions. |
-| `tools/pc`, `tools/pc-wake` | Wake, sleep and query a second machine from your Mac (Wake-on-LAN + ssh), so heavy local models run there instead of on the laptop you are working on. Your network details live in a config file, not in the script. |
 
 **How the gauntlet loop ends.** Most loops of this shape stop on a counter and
 call it success. This one distinguishes **green** (verified against the bar,
