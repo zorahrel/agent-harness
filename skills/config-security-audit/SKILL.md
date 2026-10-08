@@ -41,7 +41,7 @@ scanner reads no state from its own path, so either way works.
 bash "$CLAUDE_PLUGIN_ROOT/scan.sh"
 
 # From a clone
-cd claude-harness/skills/config-security-audit && bash scan.sh
+cd agent-harness/skills/config-security-audit && bash scan.sh
 
 # Scan a specific project's .claude dir
 bash scan.sh /path/to/project/.claude

@@ -3,7 +3,7 @@
 Five rules for working with an agent that runs long. They are short because
 each one exists to prevent one specific failure: the first four, a way a run
 lies about itself; the fifth, a way it spends the person's attention. Copy the
-ones you want into your own `CLAUDE.md`.
+ones you want into your agent's instructions (`CLAUDE.md`, `AGENTS.md`).
 
 ## 1. The command decides, not the judgement
 
@@ -46,12 +46,14 @@ not left to keep asserting something false.
 ## 5. A decision is a menu, not a paragraph
 
 When the agent needs the person to choose, it asks through the harness's choice
-tool (`AskUserQuestion` in Claude Code, its equivalent elsewhere), not with a
-numbered list at the bottom of a long reply. One question per decision. The
+tool (`AskUserQuestion` in Claude Code, `request_user_input` in Codex and Muse
+when they offer it), not with a numbered list at the bottom of a long reply. One question per decision. The
 recommended option goes first, with one line on why. Free text stays open,
 because most real answers are not on the list.
 
-A written list is the fallback where no such tool exists, and only there.
+A written list is the fallback where no such tool exists or it is switched off,
+and only there. In a headless run nobody can answer at all: the agent decides,
+and says what it chose.
 
 A menu makes asking cheap, and that is its risk. A choice the agent can make
 and undo by itself is not a question: if every answer leads to the same work,

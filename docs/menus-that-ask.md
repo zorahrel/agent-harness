@@ -162,7 +162,8 @@ Paste this into your `CLAUDE.md`:
 - When you need me to choose, ask with AskUserQuestion: one question per
   decision, your recommended option first with one line on why. I can always
   answer in free text. Use a written, numbered list only where that tool does
-  not exist. Do not ask about anything you can decide and undo yourself.
+  not exist or is off. In a headless run nobody can answer: decide, and say what
+  you chose. Do not ask about anything you can decide and undo yourself.
 ```
 
 `AskUserQuestion` already does the hard part: up to four questions per call,
@@ -174,6 +175,12 @@ If one instruction file feeds several harnesses, name each one's tool in the
 rule. Mine: `AskUserQuestion` in Claude Code, an `ask_user_question` tool in
 Topics, `ask_user` in OpenClaw (one question, up to four options, answered with
 a reaction on WhatsApp). jcode has none, so the written list stays there.
+
+Codex and Muse have `request_user_input`, but do not always offer it: Codex keeps
+it off in its default mode, and Muse offered it in one of my last six sessions.
+Where it is missing, the written list stays. In a headless run (`codex exec`,
+`muse exec`) nobody can answer at all, so the agent decides and says what it
+chose.
 
 ## Method and privacy
 

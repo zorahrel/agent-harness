@@ -1,16 +1,19 @@
-# claude-harness
+# agent-harness
 
-Strumenti per [Claude Code](https://claude.com/claude-code) che reggono le sessioni
-lunghe, quelle in cui l'agente lavora da solo per ore.
+Skill, regole e strumenti per gli agenti AI che lavorano da soli per ore:
+[Claude Code](https://claude.com/claude-code), Codex, OpenClaw, Muse, jcode.
+Si chiamava `claude-harness`, ma quasi tutto qui funziona con qualunque agente:
+ora lo dice anche il nome.
 
 *(English version below — [jump](#english).)*
 
 ## In due parole, se non sei uno sviluppatore
 
-Claude Code è un assistente che scrive software e ha accesso al tuo computer. Ha
-un difetto noto: **su compiti lunghi si perde**. Dice «fatto» quando non lo è,
-riscrive cose che funzionavano, o costruisce difese contro problemi che non
-esistono invece di finire quello che gli hai chiesto.
+Un agente di programmazione (Claude Code, Codex e simili) è un assistente che
+scrive software e ha accesso al tuo computer. Hanno tutti un difetto noto: **su
+compiti lunghi si perdono**. Dicono «fatto» quando non lo è, riscrivono cose che
+funzionavano, o costruiscono difese contro problemi che non esistono invece di
+finire quello che gli hai chiesto.
 
 Questo repository contiene otto istruzioni scritte a mano che gli tolgono
 quelle abitudini. Non è un programma da installare: sono **file di testo** che
@@ -32,8 +35,9 @@ lo dimostra**, non quando l'agente ha finito le idee.
 
 Una delle regole di [RULES.md](RULES.md) riguarda il modo in cui l'agente ti fa
 domande. Quando gli serve che tu scelga, usa il **menu a scelte** del suo
-harness (`AskUserQuestion` in Claude Code): una domanda per scelta, la
-consigliata per prima, il testo libero sempre disponibile. Viene da una misura
+harness (`AskUserQuestion` in Claude Code, `request_user_input` in Codex e Muse
+quando lo offrono): una domanda per scelta, la consigliata per prima, il testo
+libero sempre disponibile. Viene da una misura
 su un mese di messaggi scritti agli agenti, dove l'idea opposta, un menu che
 indovina cosa stai per scrivere, ci prendeva al massimo nel 6% circa dei casi,
 quasi solo sui «vai» e sugli «ok». Storia e numeri in
@@ -57,6 +61,16 @@ quasi solo sui «vai» e sugli «ok». Storia e numeri in
 | `tools/ui-audit.js` | Misura la geometria vera di una pagina invece di chiedere a un modello se «sembra a posto»: elementi disallineati di pochi pixel, spaziature irregolari, sovrapposizioni, bottoni troppo piccoli da toccare. Si incolla nella console del browser e restituisce numeri, non opinioni. |
 | `tools/pc`, `tools/pc-wake` | Accendono, spengono e interrogano un secondo computer dal Mac (Wake-on-LAN + ssh), per scaricargli i lavori pesanti — un modello locale gira lì invece che sulla macchina su cui stai lavorando. I dati della tua rete stanno in un file di configurazione, non nello script. |
 | `docs/menus-that-ask.md` | Un mese di misure: perché i menu che indovinano cosa scriverai non servono, e quelli che ti chiedono una scelta sì. In inglese. |
+
+## Con quale agente funziona
+
+| Pezzo | Dove funziona |
+|---|---|
+| `RULES.md`, `docs/` | Ovunque: le regole si incollano nelle istruzioni dell'agente (`CLAUDE.md`, `AGENTS.md`). |
+| `skills/` | Ogni agente che legge le skill in formato `SKILL.md`: Claude Code, Codex, OpenClaw, Muse, jcode. |
+| `tools/` | Ovunque: sono comandi da terminale. |
+| `workflows/gauntlet.js` | Solo Claude Code: lo esegue il suo tool Workflow. |
+| `commands/` | Slash command di Claude Code. Sono file di testo: per un altro agente si copiano come `SKILL.md`. |
 
 ## Progetti vicini
 
@@ -105,13 +119,16 @@ secondo: 34 asserzioni, nessuna rete, nessun costo.
 Ogni pezzo si adotta da solo, non serve prendere tutto.
 
 ```bash
-git clone https://github.com/zorahrel/claude-harness.git
-cd claude-harness
+git clone https://github.com/zorahrel/agent-harness.git
+cd agent-harness
 
-# una skill
-ln -s "$PWD/skills/grill-me" ~/.claude/skills/
+# una skill, nella cartella che legge il tuo agente
+ln -s "$PWD/skills/grill-me" ~/.claude/skills/     # Claude Code
+ln -s "$PWD/skills/grill-me" ~/.agents/skills/     # Codex e Muse
+ln -s "$PWD/skills/grill-me" ~/.openclaw/skills/   # OpenClaw
+ln -s "$PWD/skills/grill-me" ~/.jcode/skills/      # jcode
 
-# il workflow (si invoca con il tool Workflow)
+# il workflow (solo Claude Code, si invoca con il tool Workflow)
 mkdir -p ~/.claude/workflows
 ln -s "$PWD/workflows/gauntlet.js"       ~/.claude/workflows/
 ln -s "$PWD/workflows/gauntlet.test.mjs" ~/.claude/workflows/
@@ -120,7 +137,8 @@ ln -s "$PWD/workflows/gauntlet.test.mjs" ~/.claude/workflows/
 ln -s "$PWD/commands/vai.md" ~/.claude/commands/
 ```
 
-Poi apri Claude Code e scrivi `/grill-me`: se risponde, è installata.
+Poi chiedi al tuo agente di usare `grill-me` (in Claude Code basta `/grill-me`):
+se risponde, è installata.
 
 ### I tool in `tools/`
 
@@ -183,26 +201,28 @@ Le cinque regole che tutto questo esiste per far rispettare stanno in
 
 <a name="english"></a>
 
-# claude-harness (English)
+# agent-harness (English)
 
-Workflows, skills and commands for [Claude Code](https://claude.com/claude-code)
-that survive long, autonomous runs — plus the five [rules](RULES.md) they exist
-to enforce.
+Skills, rules and tools for AI coding agents that survive long, autonomous runs:
+[Claude Code](https://claude.com/claude-code), Codex, OpenClaw, Muse, jcode. It
+used to be called `claude-harness`; almost everything here works with any agent,
+and now the name says so. Plus the five [rules](RULES.md) it all exists to
+enforce.
 
-**If you are not a developer:** Claude Code is an assistant that writes software
-and has access to your machine. On long tasks it drifts — it says "done" when it
-isn't, rewrites things that worked, or builds defenses against problems that
-don't exist instead of finishing what you asked. This repository is eight
-hand-written instruction files that take those habits away. Nothing to install:
-the agent reads them by itself.
+**If you are not a developer:** a coding agent (Claude Code, Codex and the like)
+is an assistant that writes software and has access to your machine. On long
+tasks they all drift: they say "done" when it isn't, rewrite things that worked,
+or build defenses against problems that don't exist instead of finishing what
+you asked. This repository is eight hand-written instruction files that take
+those habits away. Nothing to install: the agent reads them by itself.
 
 Nothing here is a framework. Each piece is a plain file the harness already knows
 how to load, and each one can be adopted on its own.
 
 **Menus that ask, not menus that guess.** One of the [rules](RULES.md) is about
 how the agent asks you things: when it needs you to choose, it uses the
-harness's choice tool (`AskUserQuestion` in Claude Code), one question per
-decision, recommended option first, free text always open. It came out of
+harness's choice tool (`AskUserQuestion` in Claude Code, `request_user_input`
+in Codex and Muse when they offer it), one question per decision, recommended option first, free text always open. It came out of
 measuring a month of messages to agents, where the opposite idea, a menu that
 predicts what you will type, was right about 6% of the time at best, almost
 only on "go" and "ok". The story and the numbers:
@@ -225,6 +245,16 @@ only on "go" and "ok". The story and the numbers:
 | `tools/pc`, `tools/pc-wake` | Wake, sleep and query a second machine from your Mac (Wake-on-LAN + ssh), so heavy local models run there instead of on the laptop you are working on. Your network details live in a config file, not in the script. |
 | `docs/menus-that-ask.md` | A month of measurements: why menus that guess what you will type did not pay off, and menus that ask for a decision made the cut. |
 
+**Which agent runs what.**
+
+| Piece | Works with |
+|---|---|
+| `RULES.md`, `docs/` | Any agent: paste the rules into its instructions (`CLAUDE.md`, `AGENTS.md`). |
+| `skills/` | Any agent that reads `SKILL.md` skills: Claude Code, Codex, OpenClaw, Muse, jcode. |
+| `tools/` | Anywhere: they are terminal commands. |
+| `workflows/gauntlet.js` | Claude Code only: its Workflow tool runs it. |
+| `commands/` | Claude Code slash commands. They are plain text: for another agent, copy one in as a `SKILL.md`. |
+
 **Nearby:** [mcp-hot-gateway](https://github.com/zorahrel/mcp-hot-gateway) mounts
 and unmounts MCP servers at runtime — tools appear instantly via
 `list_changed`, no session restart. It is what keeps every MCP this harness uses
@@ -242,7 +272,8 @@ worked is escalated to a human instead of buying round N+1. Workers and
 verifiers run on lean `worker` / `verifier` agent types when installed, and fall
 back to the default subagent when not.
 
-Install: clone, then `ln -s "$PWD/skills/<name>" ~/.claude/skills/`. If that
-symlink is refused (Claude Code write-protects `~/.claude/skills/` on some
-setups), install through a marketplace directory outside `~/.claude`, or copy
-instead of linking.
+Install: clone, then link a skill where your agent looks for skills:
+`~/.claude/skills/` (Claude Code), `~/.agents/skills/` (Codex, Muse),
+`~/.openclaw/skills/` (OpenClaw), `~/.jcode/skills/` (jcode). If the symlink is
+refused (Claude Code write-protects `~/.claude/skills/` on some setups), install
+through a marketplace directory outside `~/.claude`, or copy instead of linking.
