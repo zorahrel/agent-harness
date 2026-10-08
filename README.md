@@ -52,6 +52,7 @@ quasi solo sui «vai» e sugli «ok». Storia e numeri in
 | `skills/senior-pass` | Una passata da ingegnere senior su un progetto che esiste già: misura, mappa l'architettura, poi spazza undici assi — e **applica** le correzioni invece di elencartele. |
 | `skills/config-security-audit` | Controlla la configurazione di un agente (`.claude/`, server MCP, hook, impostazioni) cercando chiavi esposte, superfici di attacco e permessi troppo larghi. Esce con errore se trova qualcosa di grave: si può mettere in CI. |
 | `skills/graphify` | Costruisce un grafo della conoscenza da una cartella di file (codice, documenti, paper, immagini, video) e poi risponde alle domande interrogandolo. |
+| `skills/tool-forge` | Quando l'agente rifà a mano la stessa cosa su un sito o un'API per la terza volta, lo dice in una riga e scrive da solo la bozza di un tool, provata sul caso vero. Attivarlo resta una scelta tua. |
 | `skills/domain-model`, `skills/ubiquitous-language` | Domain-driven design: mappe di contesto, ADR, e tenere onesto il vocabolario del progetto. |
 | `skills/zoom-out` | Alza lo sguardo dal diff alla forma del problema. Utile quando non conosci quella zona di codice. |
 | `workflows/gauntlet.js` | Il motore del ciclo: un lavoratore per pezzo, un critico che esegue il controllo, si ripete finché il traguardo è verde — o si spiega perché non lo è. |
@@ -235,6 +236,7 @@ only on "go" and "ok". The story and the numbers:
 | `skills/senior-pass` | A full senior-engineer pass over an existing project: measure the bar first, map the architecture, sweep eleven axes — and apply the fixes rather than filing them. In Italian. |
 | `skills/config-security-audit` | Audits an agent configuration (`.claude/`, MCP servers, hooks, settings) for secrets, injection surface, over-permissive allow-lists. Exits non-zero on HIGH findings, so it works as a CI gate. |
 | `skills/graphify` | Builds a persistent knowledge graph from a folder of files (code, docs, papers, images, video) and answers questions by querying it. In Italian. |
+| `skills/tool-forge` | When the agent repeats the same manual work on a site or API for the third time, it says so in one line and drafts the tool itself, tested on the real case. Turning it on stays with a human. |
 | `skills/domain-model`, `skills/ubiquitous-language` | Domain-driven design: context maps, ADRs, keeping the vocabulary honest. |
 | `skills/zoom-out` | Steps back from the diff to the shape of the problem. |
 | `workflows/gauntlet.js` | Fan out one worker per piece, pair each with a critic that *runs* the check, loop until the bar is green — or report honestly why it isn't. |
