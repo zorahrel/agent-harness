@@ -1,0 +1,138 @@
+#!/usr/bin/env bash
+# mac-link — porta una sessione cloud (container Linux effimero) dentro il tuo
+# tailnet e le dà una shell sul Mac via ssh. Uso:
+#
+#   mac-link up            installa Tailscale + ssh, entra nel tailnet
+#   mac-link ssh [cmd]     shell (o comando) sul Mac
+#   mac-link status        stato del tailnet e del Mac
+#   mac-link pubkey        la chiave pubblica da autorizzare sul Mac
+#
+# Perché esiste (10/10/2026): un container cloud non raggiunge il Mac, e la
+# build App Store di Tailscale sul Mac non fa da server Tailscale SSH («does not
+# run in sandboxed Tailscale GUI builds»). Funziona invece il Login remoto di
+# macOS, raggiunto attraverso il tailnet con `tailscale nc` come ProxyCommand:
+# il container gira in userspace-networking, senza interfaccia di rete.
+#
+# Niente dati della rete qui dentro: arrivano dai secret dell'ambiente cloud.
+#   TS_AUTHKEY   auth key Tailscale. Meglio ephemeral + tag + scadenza breve:
+#                così il nodo sparisce col container. Senza, `up` stampa un link
+#                di login da aprire a mano.
+#   MAC_HOST     nome o IP del Mac nel tailnet (es. macbook)
+#   MAC_USER     utente sul Mac
+#   MAC_SSH_KEY  chiave privata ssh (il contenuto, non un path). Senza, `up` ne
+#                genera una nuova a ogni sessione e ti mostra la pubblica.
+#   TS_HOSTNAME  nome del container nel tailnet (default claude-cloud)
+
+set -euo pipefail
+
+# Il socket unix ha un limite di ~108 caratteri: gli scratchpad delle sessioni
+# cloud sono più lunghi, e tailscaled muore con «invalid argument». Per questo
+# lo stato sta in un path corto.
+STATE="${MAC_LINK_STATE:-/run/mac-link}"
+SOCK="$STATE/ts.sock"
+KEY="$STATE/id_ed25519"
+
+die() { echo "mac-link: $*" >&2; exit 1; }
+
+ts() { "$STATE/bin/tailscale" --socket="$SOCK" "$@"; }
+
+install_tailscale() {
+  [[ -x "$STATE/bin/tailscale" ]] && return
+  local arch
+  case "$(uname -m)" in
+    x86_64) arch=amd64 ;; aarch64|arm64) arch=arm64 ;;
+    *) die "architettura non supportata: $(uname -m)" ;;
+  esac
+  local tgz dl="$STATE/dl"
+  mkdir -p "$dl" "$STATE/bin"
+  tgz=$(curl -fsS "https://pkgs.tailscale.com/stable/?mode=json" |
+    python3 -I -c "import sys,json; print(json.load(sys.stdin)['Tarballs']['$arch'])")
+  curl -fsS -o "$dl/$tgz" "https://pkgs.tailscale.com/stable/$tgz"
+  # Il binario gira da root con accesso alla rete: si installa solo se il
+  # checksum pubblicato da Tailscale torna.
+  echo "$(curl -fsS "https://pkgs.tailscale.com/stable/$tgz.sha256")  $dl/$tgz" |
+    sha256sum -c --quiet - || die "checksum di $tgz non valido"
+  tar xzf "$dl/$tgz" -C "$dl"
+  cp "$dl/${tgz%.tgz}/tailscale" "$dl/${tgz%.tgz}/tailscaled" "$STATE/bin/"
+}
+
+install_ssh() {
+  command -v ssh >/dev/null && return
+  DEBIAN_FRONTEND=noninteractive apt-get install -y -qq openssh-client >/dev/null ||
+    { apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq openssh-client >/dev/null; } ||
+    die "non riesco a installare openssh-client"
+}
+
+start_daemon() {
+  # --json risponde anche da sloggato: basta che il daemon ci sia.
+  ts status --json >/dev/null 2>&1 && return
+  rm -f "$SOCK"
+  nohup "$STATE/bin/tailscaled" --tun=userspace-networking \
+    --state="$STATE/tailscaled.state" --socket="$SOCK" \
+    >"$STATE/tailscaled.log" 2>&1 &
+  for _ in $(seq 20); do [[ -S "$SOCK" ]] && return; sleep 0.5; done
+  die "tailscaled non parte: vedi $STATE/tailscaled.log"
+}
+
+join_tailnet() {
+  local name="${TS_HOSTNAME:-claude-cloud}"
+  # Già dentro: un secondo `up` senza chiave tornerebbe a chiedere il login.
+  ts status --json 2>/dev/null | grep -q '"BackendState": *"Running"' && return
+  if [[ -n "${TS_AUTHKEY:-}" ]]; then
+    ts up --authkey="$TS_AUTHKEY" --hostname="$name" >/dev/null
+    return
+  fi
+  # Senza chiave `tailscale up` resta in attesa del login: si lancia in
+  # background e si legge il link dal log del daemon, solo dalle righe nuove,
+  # perché un link di un tentativo precedente è già scaduto.
+  local from url=""
+  from=$(($(wc -c <"$STATE/tailscaled.log") + 1))
+  ts up --hostname="$name" >/dev/null 2>&1 &
+  for _ in $(seq 30); do
+    url=$(tail -c +"$from" "$STATE/tailscaled.log" |
+      grep -o 'https://login.tailscale.com/a/[A-Za-z0-9]*' | tail -1 || true)
+    [[ -n "$url" ]] && break
+    sleep 0.5
+  done
+  [[ -n "$url" ]] || die "nessun link di login: vedi $STATE/tailscaled.log"
+  echo "Apri e approva: $url"
+}
+
+setup_key() {
+  [[ -f "$KEY" ]] && return
+  if [[ -n "${MAC_SSH_KEY:-}" ]]; then
+    # Certi campi secret appiattiscono gli a capo in "\n" letterali.
+    printf '%b\n' "$MAC_SSH_KEY" >"$KEY"
+    chmod 600 "$KEY"
+    ssh-keygen -y -f "$KEY" >"$KEY.pub"
+  else
+    ssh-keygen -q -t ed25519 -N "" -C "mac-link" -f "$KEY"
+    echo "Chiave nuova: aggiungi questa riga a ~/.ssh/authorized_keys sul Mac"
+    cat "$KEY.pub"
+  fi
+}
+
+mac_ssh() {
+  [[ -n "${MAC_HOST:-}" && -n "${MAC_USER:-}" ]] || die "servono MAC_HOST e MAC_USER"
+  exec ssh -i "$KEY" -o IdentitiesOnly=yes -o BatchMode=yes \
+    -o ConnectTimeout=20 -o ServerAliveInterval=15 \
+    -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile="$STATE/known_hosts" \
+    -o "ProxyCommand=$STATE/bin/tailscale --socket=$SOCK nc %h %p" \
+    "$MAC_USER@$MAC_HOST" "$@"
+}
+
+mkdir -p "$STATE" && chmod 700 "$STATE"
+
+case "${1:-}" in
+  up)
+    install_tailscale; install_ssh; start_daemon; join_tailnet; setup_key ;;
+  ssh)
+    shift; mac_ssh "$@" ;;
+  status)
+    ts status
+    if [[ -n "${MAC_HOST:-}" ]]; then ts ping -c 1 "$MAC_HOST"; fi ;;
+  pubkey)
+    cat "$KEY.pub" ;;
+  *)
+    sed -n '2,8p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
+esac
