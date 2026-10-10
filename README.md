@@ -61,6 +61,7 @@ quasi solo sui «vai» e sugli «ok». Storia e numeri in
 | `tools/cablecheck.sh` | Ti dice cosa sa fare davvero un cavo USB-C che hai in mano: solo ricarica, oppure anche dati e video. Ventiquattro righe, nessuna dipendenza. |
 | `tools/ui-audit.js` | Misura la geometria vera di una pagina invece di chiedere a un modello se «sembra a posto»: elementi disallineati di pochi pixel, spaziature irregolari, sovrapposizioni, bottoni troppo piccoli da toccare. Si incolla nella console del browser e restituisce numeri, non opinioni. |
 | `tools/pc`, `tools/pc-wake` | Accendono, spengono e interrogano un secondo computer dal Mac (Wake-on-LAN + ssh), per scaricargli i lavori pesanti — un modello locale gira lì invece che sulla macchina su cui stai lavorando. I dati della tua rete stanno in un file di configurazione, non nello script. |
+| `tools/mac-link` | Dà a una sessione cloud (Claude Code sul web, un container effimero) una shell sul tuo Mac: la porta nel tuo tailnet Tailscale e ci entra col Login remoto di macOS. Chiavi e nomi arrivano dai secret dell'ambiente, non dallo script. |
 | `docs/menus-that-ask.md` | Un mese di misure: perché i menu che indovinano cosa scriverai non servono, e quelli che ti chiedono una scelta sì. In inglese. |
 
 ## Con quale agente funziona
@@ -180,6 +181,23 @@ Senza chiave cerca una [Moondream Station](https://moondream.ai/station) locale
 su `:2020`; se non trova nessuno dei due te lo dice ed esce, invece di
 inventarsi una risposta.
 
+`mac-link` serve dentro una sessione cloud, non sul Mac. Sul Mac va acceso il
+Login remoto (Impostazioni → Generali → Condivisione); nell'ambiente cloud vanno
+messi come secret `TS_AUTHKEY` (auth key Tailscale *ephemeral*, con un tag),
+`MAC_HOST`, `MAC_USER` e `MAC_SSH_KEY` (la chiave privata la cui pubblica sta in
+`~/.ssh/authorized_keys` sul Mac). Poi, nello script di setup dell'ambiente o a
+mano:
+
+```bash
+tools/mac-link up               # Tailscale + ssh, entra nel tailnet
+tools/mac-link ssh 'df -h /'    # un comando sul Mac
+```
+
+Senza `TS_AUTHKEY` stampa un link di login da aprire; senza `MAC_SSH_KEY`
+genera una chiave nuova e ti mostra la pubblica da autorizzare. Il tag della
+chiave serve a un ACL che lasci al container solo la porta 22 del Mac: senza,
+il container vede tutto il tuo tailnet.
+
 **Se il symlink viene rifiutato:** su alcune installazioni Claude Code protegge
 `~/.claude/skills/` da scritture esterne. In quel caso installa le skill tramite
 una cartella marketplace fuori da `~/.claude`, oppure copiale invece di
@@ -245,6 +263,7 @@ only on "go" and "ok". The story and the numbers:
 | `tools/cablecheck.sh` | Tells you what a USB-C cable can actually do — charge only, or data and video too. 24 lines, no dependencies. macOS. |
 | `tools/ui-audit.js` | Measures a page's real geometry instead of asking a model whether it "looks fine": near-miss alignments, irregular spacing, overlaps, tap targets under 44px. Paste it into the browser console; it returns numbers, not opinions. |
 | `tools/pc`, `tools/pc-wake` | Wake, sleep and query a second machine from your Mac (Wake-on-LAN + ssh), so heavy local models run there instead of on the laptop you are working on. Your network details live in a config file, not in the script. |
+| `tools/mac-link` | Gives a cloud session (Claude Code on the web, an ephemeral container) a shell on your Mac: joins your Tailscale tailnet in userspace mode and reaches macOS Remote Login through it. Keys and names come from the environment's secrets, not from the script. |
 | `docs/menus-that-ask.md` | A month of measurements: why menus that guess what you will type did not pay off, and menus that ask for a decision made the cut. |
 
 **Which agent runs what.**
